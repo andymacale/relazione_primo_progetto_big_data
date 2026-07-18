@@ -65,23 +65,6 @@
   keepspaces=true,
 }
 
-% ── Bash listings style ─────────────────────────────────────────────────────
-\lstdefinestyle{bashstyle}{
-  language=bash,
-  basicstyle=\ttfamily\footnotesize,
-  keywordstyle=\color{blue!70!black}\bfseries,
-  commentstyle=\color{green!50!black}\itshape,
-  stringstyle=\color{orange!80!black},
-  breaklines=true,
-  frame=single,
-  rulecolor=\color{gray!40},
-  numbers=left,
-  numberstyle=\tiny\color{gray},
-  showstringspaces=false,
-  captionpos=b,
-  keepspaces=true,
-}
-
 \renewcommand{\lstlistingname}{Listato}
 \floatname{algorithm}{Algoritmo}
 
@@ -146,22 +129,12 @@ Il router \textbf{r5} funge da gateway perimetrale del Data Center e ospita il f
 \texttt{mongo\_db}  & kathara-mongo-custom    & MongoDB — Data Lake \\
 \texttt{llm}        & kathara-llm-custom      & Ollama + GPU passthrough \\
 \texttt{admin}      & kathara-admin-custom    & Dashboard Streamlit \\
-\texttt{web\_server}& kathara-webserver-custom& Web server statico (IP: \texttt{2.0.0.131}) \\
+\texttt{web\_server}& kathara-webserver-custom& Web server statico \\
 \texttt{sniffer}    & kathara/base            & Cattura traffico (tcpdump) \\
 \bottomrule
 \end{tabularx}
 \caption{Nodi del Data Center e rispettivi ruoli}
 \end{table}
-
-\subsection{Configurazione di Rete dei Nodi Bridged}
-I nodi \texttt{admin} e \texttt{llm} operano in modalità \textbf{bridged}: hanno una seconda
-interfaccia di rete collegata direttamente all'host Docker, consentendo l'esposizione di
-porte verso l'esterno (\texttt{8080:80} per la dashboard, \texttt{11435:11434} per Ollama).
-La mappatura della porta LLM usa l'offset +1 (\texttt{11435}) per evitare conflitti con
-un'eventuale istanza Ollama in esecuzione sull'host. Per funzionare correttamente in modalità
-bridged, Ollama deve ascoltare su tutte le interfacce; questo è garantito dalla variabile
-d'ambiente \texttt{OLLAMA\_HOST=0.0.0.0:11434} impostata sia in \texttt{lab.conf} che
-nello script di avvio del nodo.
 
 % ═══════════════════════════════════════════════════════
 \section{Il Dataset: BigFlow-NIDS}
@@ -250,39 +223,28 @@ Il database \texttt{datalake} contiene otto collezioni:
 
 \subsection{Capped Collection per il Traffico Live}
 La collezione \texttt{live\_traffic} è di tipo \textbf{Capped}: struttura circolare in cui i documenti
-più vecchi vengono sovrascritti automaticamente al raggiungimento del limite configurato.
-È fondamentale crearla con \texttt{db.create\_collection} e non con \texttt{convertToCapped},
-poiché quest'ultimo ignora il parametro \texttt{max} e applica solo il limite di dimensione in byte:
+più vecchi vengono sovrascritti automaticamente al raggiungimento del limite configurato,
+mantenendo costante la dimensione del database:
 
-\begin{lstlisting}[style=pystyle, caption={Creazione corretta della Capped Collection}]
-# CORRETTO: create_collection rispetta entrambi i limiti
+\begin{lstlisting}[style=pystyle, caption={Creazione della Capped Collection}]
 db.create_collection(
     "live_traffic",
     capped=True,
-    size=10 * 1024 * 1024,  # 10 MB (limite fisico)
+    size=10 * 1024 * 1024,  # 10 MB
     max=5000                 # max 5000 documenti
 )
-# ERRATO per il limite max: convertToCapped ignora max
-# db.command("convertToCapped", "live_traffic", size=..., max=5000)
 \end{lstlisting}
 
 Ogni documento inserito ha struttura: \texttt{timestamp}, \texttt{summary} (descrizione Scapy),
-\texttt{length}, \texttt{src}, \texttt{dst}, \texttt{proto}. La metrica \emph{Pacchetti Sniffati}
-nella homepage legge il valore effettivo di \texttt{max} dalla risposta di \texttt{collStats},
-evitando valori hardcoded che diventerebbero inaccurati in caso di ricreazione della collezione.
+\texttt{length}, \texttt{src}, \texttt{dst}, \texttt{proto}.
 
 % ═══════════════════════════════════════════════════════
 \section{Pipeline di Ingestione Dati}
 
-\subsection{Cattura del Traffico — Sniffer}
-Il nodo \texttt{sniffer} esegue \texttt{tcpdump} in un ciclo \texttt{while true}, catturando
-blocchi di 1.000 pacchetti alla volta verso il file \texttt{/catture/analisi\_traffico.pcap}
-(volume condiviso con \texttt{admin}). Il ciclo garantisce che il file non cresca indefinitamente
-e che il contatore del \texttt{pcap\_ingestor} si resetti automaticamente ad ogni rotazione.
-
 \subsection{Ingestor PCAP in Tempo Reale}
-Il modulo \texttt{pcap\_ingestor.py} monitora in polling (ogni secondo) il file PCAP prodotto
-dal sniffer. L'algoritmo è descritto nell'Algoritmo~\ref{alg:ingestor}.
+Il modulo \texttt{pcap\_ingestor.py} monitora in polling (ogni secondo) il file
+\texttt{analisi\_traffico.pcap} prodotto dal nodo sniffer. Il suo comportamento è descritto
+nell'Algoritmo~\ref{alg:ingestor}.
 
 \begin{algorithm}[H]
 \caption{PCAP Ingestor}
@@ -297,26 +259,13 @@ dal sniffer. L'algoritmo è descritto nell'Algoritmo~\ref{alg:ingestor}.
   \If{$|pacchetti| > ultimo$}
     \State $nuovi \gets pacchetti[ultimo:]$
     \For{ogni pacchetto $p$ in $nuovi$}
-      \State Estrai \textit{src, dst, proto, summary} da Scapy
+      \State Estrai \textit{src, dst, proto, summary}
       \If{$src \in black\_list$ \textbf{and} $src \notin blocked$}
         \State Invia \texttt{BLOCK:src} via UDP al firewall su r5
         \State Inserisci in \texttt{blocked\_ips}
       \EndIf
-      \If{$proto = \text{TCP}$}
-        \State $parte\_dst \gets summary.\Call{split}{\text{" > "}}[1]$
-        \If{$\text{":bgp"} \in parte\_dst$ \textbf{or} $\text{":179"} \in parte\_dst$}
-          \State $alert \gets \text{"POSSIBILE BGP HIJACKING"}$
-        \ElsIf{$\text{":ssh"} \in parte\_dst$ \textbf{or} $\text{":22"} \in parte\_dst$}
-          \State $alert \gets \text{"TENTATIVO BRUTE FORCE SSH"}$
-        \ElsIf{$\text{":ftp"} \in parte\_dst$ \textbf{or} $\text{":21"} \in parte\_dst$}
-          \State $alert \gets \text{"TENTATIVO FILE INJECTION"}$
-        \ElsIf{$\text{":http"} \in parte\_dst$ \textbf{or} $\text{":80"} \in parte\_dst$}
-          \State $alert \gets \text{"POSSIBILE DOS/SYN FLOOD"}$
-        \ElsIf{$\text{":27017"} \in parte\_dst$}
-          \State $alert \gets \text{"ACCESSO DATABASE NON AUTORIZZATO"}$
-        \EndIf
-      \EndIf
-      \If{$alert \neq \emptyset$ \textbf{and} $src \notin white\_list$}
+      \State Analizza pattern TCP (BGP, FTP, SSH, HTTP, MongoDB)
+      \If{pattern rilevato \textbf{and} $src \notin white\_list$}
         \State Inserisci alert in \texttt{alerts} (CRITICAL/INFO)
       \EndIf
     \EndFor
@@ -328,21 +277,10 @@ dal sniffer. L'algoritmo è descritto nell'Algoritmo~\ref{alg:ingestor}.
 \end{algorithmic}
 \end{algorithm}
 
-\paragraph{Nota implementativa sul parsing del summary Scapy.}
-Il summary prodotto da Scapy per un pacchetto TCP ha la forma:
-\texttt{CookedLinuxV2 / IP / TCP 192.168.20.2:1527 > 2.0.0.131:http S / Padding}.
-La stringa \texttt{parte\_dst} risultante da \texttt{split(" > ")[1]} è quindi
-\texttt{"2.0.0.131:http S / Padding"}: il controllo sulla porta deve usare l'operatore
-di sottostringa (\texttt{in}) e non \texttt{endswith}, poiché i flag TCP e il padding
-seguono il nome della porta.
-
 \subsection{Data Federation Spark + MongoDB}
 Il \textbf{Data Lake Explorer} monta due View federate interrogabili con una singola query SQL:
 \texttt{storico\_parquet} (file Parquet) e \texttt{live\_mongo} (collezione MongoDB).
-Il montaggio avviene in un thread separato con timeout di 45 secondi, gestito tramite
-\texttt{concurrent.futures.ThreadPoolExecutor} \emph{senza} il context manager
-(\texttt{with}) per evitare che \texttt{shutdown(wait=True)} blocchi indefinitamente
-dopo la scadenza del timeout. Esempio di join cross-source:
+Esempio di join cross-source:
 
 \begin{lstlisting}[language=SQL, caption={Esempio di query federata Parquet + MongoDB}]
 SELECT s.IPV4_SRC_ADDR, l.summary
@@ -540,6 +478,8 @@ LIMIT 100
 Il risultato è una \textbf{heatmap} (Altair \texttt{mark\_rect},
 Figura~\ref{fig:talkers}): matrice IP sorgente $\times$ IP destinazione,
 intensità del colore (scala \texttt{reds}) proporzionale al volume di byte.
+Particolarmente efficace per evidenziare attacchi volumetrici in cui un singolo
+IP sorgente appare in molte righe della matrice.
 
 \begin{figure}[H]
   \centering
@@ -549,50 +489,11 @@ intensità del colore (scala \texttt{reds}) proporzionale al volume di byte.
 \end{figure}
 
 % ═══════════════════════════════════════════════════════
-\section{Gestione della Sessione Spark}
-
-\subsection{Architettura della Connessione}
-Apache Spark opera in modalità \textbf{Standalone} con Master e Worker sullo stesso nodo
-(\texttt{spark://2.0.0.194:7077}). La \texttt{SparkSession} è gestita da Streamlit tramite
-il decorator \texttt{@st.cache\_resource}, che la mantiene in vita per tutta la sessione
-del browser evitando riconnessioni ad ogni rerun della pagina.
-
-\subsection{Resilienza e Health Check}
-Il driver Spark mantiene tre reference singleton in Python: \texttt{SparkSession.\_instantiatedSession},
-\texttt{SparkSession.\_activeSession} e \texttt{SparkContext.\_active\_spark\_context}.
-Se uno di questi diventa stantio (ad esempio dopo un riavvio del cluster), la chiamata a
-\texttt{getOrCreate()} rischia di riutilizzare il contesto morto. La funzione
-\texttt{force\_spark\_reset()} azzera esplicitamente tutti e tre prima di reinizializzare.
-
-L'health check periodico della sessione usa \texttt{sparkContext.applicationId},
-una chiamata Py4J lato driver che fallisce immediatamente se il JVM context è spento,
-senza dover attendere l'avvio di un executor (che richiede 5--15 secondi):
-
-\begin{lstlisting}[style=pystyle, caption={Health check istantaneo della sessione Spark}]
-def check_spark_alive(session, timeout=12):
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            f = ex.submit(lambda: session.sparkContext.applicationId)
-            f.result(timeout=timeout)
-        return True
-    except Exception:
-        return False
-\end{lstlisting}
-
-La costruzione della sessione è wrappata in un \texttt{ThreadPoolExecutor} con timeout
-di 40 secondi, impedendo che un cluster non raggiungibile blocchi l'intera interfaccia.
-La configurazione \texttt{spark.network.timeout} è stata deliberatamente omessa perché
-Spark ne deriva automaticamente \texttt{spark.network.timeoutInterval}, che violerebbe
-il vincolo \texttt{timeoutInterval <= blockManagerHeartbeatTimeoutMs} causando un
-\texttt{IllegalArgumentException} all'avvio.
-
-% ═══════════════════════════════════════════════════════
 \section{Assistente IA (AI Copilot)}
 
 \subsection{Architettura LLM}
 Il nodo \texttt{llm} ospita un'istanza \textbf{Ollama} con GPU passthrough,
-esposta sulla porta 11434 verso la rete interna del Data Center.
-I modelli sono configurati dinamicamente in MongoDB
+esposta sulla porta 11434. I modelli sono configurati dinamicamente in MongoDB
 (collezione \texttt{llm\_models}), permettendo di aggiungere nuovi modelli senza
 modificare il codice applicativo:
 
@@ -661,15 +562,12 @@ e le rispettive colonne. La risposta viene renderizzata con syntax highlighting 
 % ═══════════════════════════════════════════════════════
 \section{Sistema di Sicurezza e Risposta Automatica}
 
-\subsection{Ciclo Chiuso di Rilevamento e Risposta}
 Il sistema implementa un \textbf{ciclo chiuso di rilevamento e risposta} illustrato
 in Figura~\ref{fig:ciclo}. Il modulo \texttt{pcap\_ingestor.py} genera alert in
-MongoDB; la dashboard espone la sezione \emph{Minacce Rilevate}; il comando di blocco
-raggiunge via UDP il demone \texttt{firewall\_daemon.py} su r5 che applica regole
-\texttt{iptables -A FORWARD -s <ip> -j REJECT}.
-Lo script \texttt{sync\_firewall.py}, eseguito automaticamente all'avvio del nodo
-\texttt{admin}, ripristina da MongoDB tutte le regole attive garantendo la
-sopravvivenza al riavvio (\textbf{state recovery}).
+MongoDB; la dashboard espone il pulsante di blocco; il comando raggiunge via UDP
+il demone \texttt{firewall\_daemon.py} su r5 che applica regole \texttt{iptables}.
+Lo script \texttt{sync\_firewall.py}, eseguito all'avvio, ripristina tutte le regole
+da MongoDB garantendo la sopravvivenza al riavvio (\textbf{state recovery}).
 
 \begin{figure}[H]
   \centering
@@ -677,47 +575,6 @@ sopravvivenza al riavvio (\textbf{state recovery}).
   \caption{Ciclo chiuso di rilevamento e risposta agli incidenti}
   \label{fig:ciclo}
 \end{figure}
-
-\subsection{Policy di Sicurezza: White-list e Blocked IPs}
-La sezione \emph{Policy di sicurezza di rete} della dashboard distingue due categorie:
-\begin{itemize}[noitemsep]
-  \item \textbf{Traffico sicuro (white-list)}: IP del Data Center sempre esclusi
-        dalla generazione di alert (evita falsi positivi su traffico Spark/MongoDB).
-  \item \textbf{Traffico malevolo (blocked IPs)}: IP attualmente bloccati a livello
-        di firewall, con timestamp del blocco. Questa vista riflette lo stato reale
-        della collezione \texttt{blocked\_ips} e non una lista di policy separata.
-\end{itemize}
-
-\subsection{Script di Simulazione}
-Per ripetere il ciclo attacco/rilevamento/blocco in modo riproducibile, sono forniti
-due script nella root del progetto:
-
-\begin{lstlisting}[style=bashstyle, caption={reset\_test.sh — ripristino stato pre-simulazione}]
-#!/bin/bash
-# Pulisce MongoDB, svuota iptables su r5, riavvia pcap_ingestor
-kathara exec admin -- python3 -c "
-from pymongo import MongoClient
-db = MongoClient('mongodb://mongo.cyber.net:27017/')['datalake']
-db['blocked_ips'].delete_many({})
-db['alerts'].delete_many({})
-"
-kathara exec r5 -- iptables -F FORWARD
-kathara exec r5 -- iptables -F INPUT
-kathara exec admin -- bash -c \
-  "pkill -f pcap_ingestor 2>/dev/null; \
-   nohup python3 /app/pcap_ingestor.py \
-   > /var/log/pcap_ingestor.log 2>&1 &"
-\end{lstlisting}
-
-\begin{lstlisting}[style=bashstyle, caption={avvia\_attacco.sh — SYN Flood dal nodo attacker}]
-#!/bin/bash
-# Invia 200 pacchetti SYN alla porta 80 del web server (2.0.0.131)
-kathara exec attacker -- hping3 -S -p 80 -c 200 -i u500 2.0.0.131
-\end{lstlisting}
-
-Il flusso di test è: \texttt{./reset\_test.sh} $\to$ \texttt{./avvia\_attacco.sh}
-$\to$ dashboard mostra \emph{ATTACCO IN CORSO!} $\to$ click \emph{Blocca IP}
-$\to$ dashboard mostra \emph{ATTACCO MITIGATO}.
 
 % ═══════════════════════════════════════════════════════
 \section{Dashboard Amministrativa}
@@ -733,7 +590,7 @@ La dashboard Streamlit è strutturata in cinque tab principali:
 \midrule
 Homepage     & \texttt{homepage.py}      & Stato servizi, KPI globali, alert banner \\
 Catalogo     & \texttt{catalogo.py}      & Data Catalog, anteprima, upload CSV, Data Lake Explorer \\
-Analisi      & \texttt{spark\_analysis.py} & 6 tab analitiche Spark SQL (cap.~5) + sicurezza \\
+Analisi      & \texttt{spark\_analysis.py} & 6 tab analitiche Spark SQL (cap.~5) \\
 Sniffer      & \texttt{live\_sniffer.py} & Traffico live MongoDB, Privacy Mode, download PCAP \\
 Assistente IA& \texttt{ai\_copilot.py}   & Chat LLM con RAG contestuale \\
 \bottomrule
@@ -773,8 +630,6 @@ in uno scenario realistico:
   \item \textbf{Integrazione AI}: LLM locali con RAG contestuale su dati MongoDB,
         prompt engineering e generazione automatica di query SQL (NL2SQL),
         senza dipendenza da servizi cloud.
-  \item \textbf{Sicurezza attiva}: ciclo chiuso sniffer $\to$ NIDS $\to$ firewall con
-        state recovery al riavvio e simulazione riproducibile tramite script dedicati.
 \end{itemize}
 
 \paragraph{Sviluppi futuri.}
