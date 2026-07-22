@@ -35,13 +35,13 @@
   keywordstyle=\color{blue}\bfseries,
   commentstyle=\color{green!50!black},
   stringstyle=\color{orange},
-  breaklines=true,      
-  frame=single,        
-  numbers=left,         
+  breaklines=true,
+  frame=single,
+  numbers=left,
   numberstyle=\tiny,
   showstringspaces=false,
   captionpos=b,
-  alsoletter={_},     
+  alsoletter={_},
   keepspaces=true,
   literate={_}{{\_}}1
 }
@@ -63,6 +63,7 @@
 }
 
 \lstdefinestyle{txtstyle}{
+  language={},
   basicstyle=\ttfamily\footnotesize,
   breaklines=true,
   frame=single,
@@ -73,9 +74,35 @@
   literate={_}{{\_}}1
 }
 
+% --- Contatori indipendenti per tipo ---
+\newcounter{lstSQL}
+\newcounter{lstPy}
+\newcounter{lstTxt}
 
+\lstnewenvironment{sqllisting}[1][]{%
+  \renewcommand{\lstlistingname}{Interrogazione}%
+  \setcounter{lstlisting}{\value{lstSQL}}%
+  \lstset{#1}%
+}{%
+  \setcounter{lstSQL}{\value{lstlisting}}%
+}
 
-\renewcommand{\lstlistingname}{Interrogazione}
+\lstnewenvironment{pylisting}[1][]{%
+  \renewcommand{\lstlistingname}{Codice}%
+  \setcounter{lstlisting}{\value{lstPy}}%
+  \lstset{style=pystyle,#1}%
+}{%
+  \setcounter{lstPy}{\value{lstlisting}}%
+}
+
+\lstnewenvironment{txtlisting}[1][]{%
+  \renewcommand{\lstlistingname}{Prompt}%
+  \setcounter{lstlisting}{\value{lstTxt}}%
+  \lstset{style=txtstyle,#1}%
+}{%
+  \setcounter{lstTxt}{\value{lstlisting}}%
+}
+
 \floatname{algorithm}{Algoritmo}
 
 
@@ -152,9 +179,9 @@
         \item schema-on-read, cioè un metodo di gestione di dati che salva le informazioni grezze senza una struttura fissa e lo schema viene applicato solo quando i dati vengono letti;
         \item compatibilità nativa con Spark-SQL.
     \end{itemize}
-    \noindent {\renewcommand{\lstlistingname}{Codice}%
+    \noindent
     Di seguito, vengono riportati il codice Python di ingestione del dataset e conversione in Parquet e gli attributi.
-    \begin{lstlisting}[style=pystyle, caption={Ingestione CSV e conversione in Parquet}, label=lst:ingest]
+    \begin{pylisting}[style=pystyle, caption={Ingestione CSV e conversione in Parquet}, label=lst:ingest]
     spark = None
 
     try:
@@ -197,7 +224,7 @@
             print("Chiusura di spark ...")
             spark.stop()
             print("Spark chiuso correttamente")
-    \end{lstlisting}}
+    \end{pylisting}
     \begin{table}[H]
         \centering
         \small
@@ -272,7 +299,7 @@
     raggruppando per indirizzo IP sorgente e tipologia di traffico malevolo re 
     stampa la quantità di traffico, tutto ciò scritto in formato umano, poiché leggere la quantità solo in byte diventa piuttosto noioso ed inutilmente
     complicato.
-    \begin{lstlisting}[caption={Analisi del traffico malevolo per indirizzo IP}, label=lst:analisi_traffico]
+    \begin{sqllisting}[caption={Analisi del traffico malevolo per indirizzo IP}, label=lst:analisi_traffico]
     with traffico as (
         select ipv4_src_addr as ip_attaccante,
             case
@@ -305,7 +332,7 @@
     from traffico
     order by occorrenze desc
     limit 5;
-    \end{lstlisting}
+    \end{sqllisting}
     Come è possibile vedere nella dashboard, è possibile bloccare tali indirizzi IP, inserendoli nella black-list nella tabella di instradamento del
     router che si interfaccia nel data center.
     \begin{figure}[H]
@@ -336,11 +363,11 @@
     di riferimento) non aiuta, poiché il modello si troverà in difficoltà nel riconoscere gli attacchi.\\
     Inoltre, ciò risulterà utile se si vorrà 
     implemetare in futuro modelli di Machine Learning usando la libreria di Spark MLlib.
-    \begin{lstlisting}[caption={Bilanciamento del dataset}, label=lst:bilanciamento_dataset]
+    \begin{sqllisting}[caption={Bilanciamento del dataset}, label=lst:bilanciamento_dataset]
         select Attack as label, count(*) as occorrenze 
         from traffico_nids 
         group by Attack
-    \end{lstlisting}
+    \end{sqllisting}
     Nella dashboard ciò viene rappresentato con un grafico a barre e con una tabella delle frequenze.
     \begin{figure}[H]
         \centering
@@ -394,14 +421,14 @@
     \subsection{Analisi dell'andamento temporale}
     L'analisi dell'andamento temporale permette di aggregare i flussi di traffico in un minuto, per calcolare l'andamento del traffico sia benigno
     sia malevolo, e di identificare i picchi e le finestre di attività malevola, riportando un grafico multilinee.
-    \begin{lstlisting}[caption={Andamento temporale}, label=lst:andamento_temporale]
+    \begin{sqllisting}[caption={Andamento temporale}, label=lst:andamento_temporale]
         select 
             date_trunc('minute', from_unixtime(flow_start_milliseconds / 1000)) as time_window,
             label, sum(in_bytes + out_bytes) as total_bytes, count(*) as flow_count
         from traffico_nids
         group by 1, 2
         order by 1 asc
-    \end{lstlisting}
+    \end{sqllisting}
     \begin{figure}[H]
         \centering
         \includegraphics[width=0.9\textwidth]{figure/tempo.png}
@@ -411,7 +438,7 @@
     \subsection{Distribuzione dei protocolli di rete e flussi}
     Un'altra interrogazione molto importante è la distribuzione dei protocolli di rete e delle porte utilizzate durante gli attacchi, mostrando quali
     sono le porte più critiche. Ciò viene mostrato da un grafico a barre a pila, distinguendo da traffico benigno a traffico malevolo.
-    \begin{lstlisting}[caption={Distribuzione dei protocolli e flussi}, label=lst:porte]
+    \begin{sqllisting}[caption={Distribuzione dei protocolli e flussi}, label=lst:porte]
         select 
             l4_dst_port as port,
             case 
@@ -427,7 +454,7 @@
         group by 1, 2, 3
         order by flow_count desc
         limit 50
-    \end{lstlisting}
+    \end{sqllisting}
     \begin{figure}[H]
         \centering
         \includegraphics[width=1\textwidth]{figure/porte.png}
@@ -437,7 +464,7 @@
     \subsection{Top talkers}
     L'ultima query si basa nel creare una heatmap tra IP sorgente ed IP destinazione, per rappresentare il volume dei byte. Ciò è molto efficace per
     evidenziare gli attacchi volumetrici causati da una singola sorgente IP.
-    \begin{lstlisting}[caption={Top talkers}, label=lst:top_talkers]
+    \begin{sqllisting}[caption={Top talkers}, label=lst:top_talkers]
         select 
             ipv4_src_addr as source_ip,
             ipv4_dst_addr as destination_ip,
@@ -449,7 +476,7 @@
         group by 1, 2, 3
         order by total_bytes desc
         limit 100
-    \end{lstlisting}
+    \end{sqllisting}
     \begin{figure}[H]
         \centering
         \includegraphics[width=1\textwidth]{figure/heatmap.png}
@@ -584,7 +611,7 @@
         \caption{Assitente IA in modalità ragionamento}
         \label{fig:llm}
     \end{figure}
-    \begin{lstlisting}[style=txtstyle, caption={Invocazione di llama}, label=lst:llama]
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di llama}, label=lst:llama]
         Sei un assistente virtuale esperto di cybersecurity per il Data Center.
         IMPORTANTE: Devi rispondere SEMPRE in lingua ITALIANA in modo diretto, veloce e conciso.
 
@@ -593,8 +620,8 @@
         2. Usa termini tecnici italiani appropriati (es. "regole del firewall", "traffico bloccato", "indirizzi IP").
         3. Assisti l'utente con l'analisi del traffico, gli IP bloccati e gli allarmi del firewall in modo cortese ed efficiente.
 
-    \end{lstlisting}
-    \begin{lstlisting}[style=txtstyle, caption={Invocazione di qwen}, label=lst:qwen]
+    \end{txtlisting}
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di qwen}, label=lst:qwen]
         Sei un assistente virtuale esperto di cybersecurity per il Data Center.
         IMPORTANTE: Devi rispondere SEMPRE in lingua ITALIANA.
 
@@ -605,7 +632,7 @@
         4. Usa termini tecnici italiani appropriati (es. "regole del firewall", "traffico bloccato", "indirizzi IP").
         5. Assisti l'utente con l'analisi del traffico, gli IP bloccati e gli allarmi del firewall in modo cortese.
 
-    \end{lstlisting}
+    \end{txtlisting}
     \subsection{Generazione SQL via LLM}
     Come già accennato, nel data lake explorer sono stato implementati llama e qwen per aiutare l'amministratore ad
     scrivere le query SQL. Ciò avviene riportando solamente le parole chiave concesse per motivi di sicurezza e 
@@ -616,7 +643,7 @@
         \caption{Query generata dal LLM mostrando anche il ragionamento}
         \label{fig:query_llm}
     \end{figure}
-    \begin{lstlisting}[style=txtstyle, caption={Invocazione di llama per generare la query}, label=lst:query_llama]
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di llama per generare la query}, label=lst:query_llama]
         Sei un assistente esperto in Data Engineering, specializzato nella scrittura di query SQL per Apache Spark.
         Il tuo compito è scrivere la query SQL esatta richiesta dall'utente in modo rapido e diretto.
         Regole fondamentali:
@@ -627,8 +654,8 @@
         5. 'live_mongo' ha le colonne: timestamp, src, dst, proto, summary.
         Non effettuare fasi di ragionamento. Fornisci immediatamente la query richiesta senza tag extra.
 
-    \end{lstlisting}
-    \begin{lstlisting}[style=txtstyle, caption={Invocazione di qwen per generare la query}, label=lst:query_qwen]
+    \end{txtlisting}
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di qwen per generare la query}, label=lst:query_qwen]
         Sei un assistente esperto in Data Engineering, specializzato nella scrittura di query SQL per Apache Spark.
         Il tuo compito è scrivere la query SQL esatta richiesta dall'utente.
         Regole fondamentali:
@@ -640,7 +667,7 @@
         Usa i tag <think> e </think> per i tuoi ragionamenti interni, ma il blocco finale deve essere solo codice SQL.
 
 
-    \end{lstlisting}
+    \end{txtlisting}
     \section{Ulteriori strumenti}
     Per la gestione del data lake, sono stati implementati anche altri due strumenti che sono molto utili e rilevanti.
     \subsection{Catalogo}
