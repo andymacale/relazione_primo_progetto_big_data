@@ -514,7 +514,7 @@
         \item Qwen 3.5 (indicato con "Ragionamento"), con 9 miliardi di parametri, per fornire risposte ragionate, che hanno i tag <think> espliciti.
     \end{itemize}
     La comunicazione con Ollama avviene tramite API in modalità streaming, separando i token di ragionamento da quelli della risposta finale tramite
-    espressione regolare.
+    espressioni regolari.
     \begin{algorithm}[H]
     \caption{Streaming della risposta di un LLM con separazione tra ragionamento e risposta finale}
     \label{alg:stream_llm}
@@ -683,7 +683,7 @@
     Per la gestione del data lake, sono stati implementati anche altri due strumenti che sono molto utili e rilevanti.
     \subsection{Catalogo}
     Il catalogo implementa un metadata store centralizzato su MongoDB che censisce tutte le fonti dati del sistema (dataset
-    storico NIDS, traffico live, modelli LLM), mostrando per ciascuna schema, stato online/offline, formato e 
+    storico NIDS, traffico live, modelli LLM), mostrando per ciascun schema, stato online/offline, formato e 
     un'anteprima con profilazione automatica delle colonne (tipi di dato, statistiche descrittive). 
     Supporta inoltre l'upload di nuovi dataset CSV con una pipeline di security by design: limite dimensione, 
     controllo estensione, rilevamento di file binari mascherati da CSV tramite magic number, scansione di keyword 
