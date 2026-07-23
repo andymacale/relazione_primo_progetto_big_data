@@ -167,9 +167,9 @@
         \item Spark come motore per l'elaborazione distribuita;
         \item MongoDB come data-lake operazionale;
         \item LLM locali per l'assistente AI, grazie l'uso di Ollama;
-        \item Streamlit per una dashboard molto semplice da implentare, poiché la parte di HTML, CSS e Javascript è del tutto trasparente al programmatore, garantendo delle pagine Web semplici ed soprattutto intuitive.
+        \item Streamlit per una dashboard molto semplice da implentare, poiché la parte di HTML, CSS e Javascript è del tutto trasparente al programmatore, garantendo delle pagine Web semplici e soprattutto intuitive.
     \end{itemize}
-    \section{Dataset di riferimento}   
+    \section{Dataset di riferimento ed ingestione dei dati}   
     Il dataset BigFlow-NIDS, recuparato da Kaggle, contiene flussi di traffico etichettati per il rilevamento delle
     intrusioni di rete (NIDS). Contiene oltre 66.355.798 record suddivisi tra traffico legittimo (Benign) e diverse
     categorie di attacco (DDoS, Brute Force, ecc.).
@@ -250,7 +250,7 @@
     Come datalake è stato scelto MongoDB, poiché contiene dati live semi-strutturati e documentali. In particolare, offre:
     \begin{itemize}
         \item uno schema flessibile, utilizzando dei documenti a struttura variabile, ideali per PCAP stream ed alert;
-        \item dei bufferi circolari a dimensioni fissa;
+        \item dei buffer circolari a dimensioni fissa;
         \item ricerca full-text, grazie all'uso di espressioni regolari;
         \item connettore con Spark.
     \end{itemize}
@@ -261,12 +261,12 @@
     test: ovviamente, in scenari reali questo limite potrà essere alzato di moltissimo.\\
     Ogni documento presenta la seguente struttura:
     \begin{itemize}
-        \item timestamp;
-        \item summary (descrizione tramite scapy);
-        \item length;
-        \item src;
-        \item dst;
-        \item proto.
+        \item timestamp, cioè la data e ora;
+        \item summary, che è la descrizione tramite scapy;
+        \item length, ossia la dimensione del pacchetto;
+        \item src, ovvero l'IP della sorgente;
+        \item dst, cioè l'IP del destinatario;
+        \item proto, che è il protocollo di rete utilizzato.
     \end{itemize}
     \subsection{Data lake explorer}
     Il data-lake explorer monta due view  federate interrogabili con una singola query SQL:
@@ -292,11 +292,11 @@
     \section{Analisi del traffico}
     Tutte le query SQL sono state effettutate con Spark SQL, poiché si hanno oltre 66 milioni di record, perciò è
     sicuramente la scelta migliore. Invece la scelta di usare Spark SQL invece di Spark core risiede nel fatto che
-    le interrogazioni richiedono delle CTE, raggruppamente, anche case, esprimibili più semplicemente in linguaggio
+    le interrogazioni richiedono delle CTE, raggruppamenti, anche case, esprimibili più semplicemente in linguaggio
     SQL piuttosto che in Python o in Java. Tuttavia, tale scelta è del tutto soggettiva.
     \subsection{Analisi mitigazione}
-    L'analisi mitigazione consiste nell'eseguire una query che prende i cinque attaccanti con maggior nummero di occorenze,
-    raggruppando per indirizzo IP sorgente e tipologia di traffico malevolo re 
+    L'analisi mitigazione consiste nell'eseguire una query che prende i cinque attaccanti con maggior numero di occorenze,
+    raggruppando per indirizzo IP sorgente e tipologia di traffico malevolo e 
     stampa la quantità di traffico, tutto ciò scritto in formato umano, poiché leggere la quantità solo in byte diventa piuttosto noioso ed inutilmente
     complicato.
     \begin{sqllisting}[caption={Analisi del traffico malevolo per indirizzo IP}, label=lst:analisi_traffico]
@@ -334,15 +334,18 @@
     limit 5;
     \end{sqllisting}
     Come è possibile vedere nella dashboard, è possibile bloccare tali indirizzi IP, inserendoli nella black-list nella tabella di instradamento del
-    router che si interfaccia nel data center.
+    router che si interfaccia nel data lake.
     \begin{figure}[H]
         \centering
         \includegraphics[width=1\textwidth]{figure/mitigazione.png}
         \caption{Dashboard che riporta l'analisi mitigazione}
         \label{fig:mitigazione}
     \end{figure}
-    \noindent In questa query viene eseguita la cosiddetta analisi delle performance, in cui viene confrontato la scalabilità in Spark e con un DB relazionale.
-    In particolare, il tempo del DB relazionale non è misurato, ma stimato: si parte dal tempo reale dell'analisi Spark sui 66M di record. In particolare:
+    \noindent Il pannello riporta inoltre il numero di combinazioni distinte indirizzo IP--tipologia di attacco individuate dalla CTE (15 nel caso in esame): un valore
+    contenuto, tipico di un ambiente di test con pochi nodi attaccanti simulati, che si distingue dal conteggio dei singoli flussi malevoli (nell'ordine dei milioni)
+    riportato nella tabella di dettaglio.\\
+    In questa query viene eseguita la cosiddetta analisi delle performance, in cui viene confrontato la scalabilità in Spark e con un DB relazionale.
+    In particolare, il tempo del DB relazionale non è misurato, ma stimato: si parte dal tempo reale dell'analisi Spark sui 66 milioni di record. In particolare:
     \begin{itemize}
         \item la funzione Spark si ottiene scalando linearmente il tempo per i tre volumi ($6.6M→t*0.1, 33M→t*0.5, 66M→t$);
         \item la funzione "Legacy DB (Projected)" usa invece moltiplicatori fissi sullo stesso tempo (1.5x, 7x, 15x).
@@ -371,10 +374,15 @@
     Nella dashboard ciò viene rappresentato con un grafico a barre e con una tabella delle frequenze.
     \begin{figure}[H]
         \centering
-        \includegraphics[width=1\textwidth]{figure/bilanciamento.png}
+        \includegraphics[width=0.9\textwidth]{figure/bilanciamento.png}
         \caption{Dashboard che riporta il bilanciamento del dataset}
         \label{fig:bilanciamento}
     \end{figure}
+    \noindent Dai risultati emerge uno sbilanciamento marcato su una scala di decine di milioni di record: il traffico Benign copre circa il 55\% dei flussi
+    e il DoS un altro 12\%, mentre la maggior parte delle restanti classi (es. Worms, Shellcode, Analysis) resta sotto lo 0.1\%. Su un volume di questa
+    scala il ribilanciamento non può essere affrontato con un campionamento in memoria: richiede strategie distribuite (undersampling/oversampling
+    partizionato, pesi di classe) applicabili nativamente con Spark MLlib, confermando l'utilità dell'elaborazione distribuita già in questa fase
+    preliminare di analisi.
     \subsection{Sicurezza}
     Per quanto riguarda la sicurezza, il sistema implementa un ciclo di rilevamento sfruttando lo sniffer che cattura i pacchetti, esegue le query del
     rilevamento delle anomalie e avvisa immediamente l'utente se il data center è sotto attacco. In quel caso, l'amministratore può bloccare immediamente
@@ -384,13 +392,13 @@
     Tutto ciò viene riportato dalle figure che seguono.
     \begin{figure}[H]
         \centering
-        \includegraphics[width=1\textwidth]{figure/homepage.png}
+        \includegraphics[width=0.9\textwidth]{figure/homepage.png}
         \caption{Homepage della dashboard con tutto funzionante}
         \label{fig:homepage}
     \end{figure}
     \begin{figure}[H]
         \centering
-        \includegraphics[width=1\textwidth]{figure/attacco_corso.png}
+        \includegraphics[width=0.9\textwidth]{figure/attacco_corso.png}
         \caption{Homepage della dashboard quando viene rilevato un attacco}
         \label{fig:attacco}
     \end{figure}
@@ -435,6 +443,11 @@
         \caption{Grafico multilinee che mostra l'andamento temporale del traffico}
         \label{fig:tempo}
     \end{figure}
+    \noindent Il grafico evidenzia un picco isolato che supera i 2 miliardi di byte in una singola finestra da un minuto, a fronte di un andamento pressoché
+    piatto nel resto del periodo. Aggregare oltre 66 milioni di flussi in finestre temporali ed individuare simili picchi in un'unica passata è esattamente
+    il tipo di calcolo che beneficia della distribuzione del carico su più executor Spark, difficilmente sostenibile con un'aggregazione single-node
+    sull'intero storico. Si noti che l'asse temporale riflette i timestamp originali del dataset storico e non
+    l'orario della simulazione live.
     \subsection{Distribuzione dei protocolli di rete e flussi}
     Un'altra interrogazione molto importante è la distribuzione dei protocolli di rete e delle porte utilizzate durante gli attacchi, mostrando quali
     sono le porte più critiche. Ciò viene mostrato da un grafico a barre a pila, distinguendo da traffico benigno a traffico malevolo.
@@ -461,16 +474,17 @@
         \caption{Grafico a barre a pila che mostra la distribuzione dei protocolli e flussi}
         \label{fig:porte}
     \end{figure}
+    \noindent Dal grafico risulta che le porte 80 e 21 concentrano la quota nettamente maggiore dei flussi, a fronte di una lunga coda di porte con volumi
+    residuali. Dal punto di vista dell'elaborazione, la query raggruppa 66 milioni di flussi su tre dimensioni (porta, protocollo, label) riducendoli a sole
+    50 righe aggregate: un'operazione che sfrutta il group-by distribuito di Spark su un volume che renderebbe proibitivo un equivalente calcolato
+    single-node.
     \subsection{Top talkers}
     L'ultima query si basa nel creare una heatmap tra IP sorgente ed IP destinazione, per rappresentare il volume dei byte. Ciò è molto efficace per
     evidenziare gli attacchi volumetrici causati da una singola sorgente IP.
     \begin{sqllisting}[caption={Top talkers}, label=lst:top_talkers]
         select 
-            ipv4_src_addr as source_ip,
-            ipv4_dst_addr as destination_ip,
-            label,
-            sum(in_bytes + out_bytes) as total_bytes,
-            count(*) as flow_count
+            ipv4_src_addr as source_ip, ipv4_dst_addr as destination_ip, label,
+            sum(in_bytes + out_bytes) as total_bytes, count(*) as flow_count
         from traffico_nids
         where ipv4_src_addr is not null and ipv4_dst_addr is not null
         group by 1, 2, 3
@@ -483,24 +497,21 @@
         \caption{Heatmap che mostra quali sono gli IP sorgenti che inviano più volumi di dati}
         \label{fig:heatmap}
     \end{figure}
+    \noindent La heatmap evidenzia poche coppie sorgente-destinazione responsabili della quasi totalità del volume in byte, con la scala colore che arriva
+    fino a 10 miliardi di byte per singola coppia: un pattern che a livello di elaborazione richiede di ordinare per volume aggregato l'intero
+    prodotto cartesiano IP sorgente/destinazione osservato nei 66 milioni di flussi, operazione per cui il piano di shuffle distribuito di Spark SQL è
+    determinante rispetto a un join/order-by eseguito su una singola macchina.
     \section{Implementazione degli LLM}
     In questo progetto sono stati implementati due LLM in locale, sfruttando il motore di inferenza Ollama. La scelta degli LLM si basano molto sulle
-    caratteristiche dell'hardware del calcolatore usato, mostrate di seguito.
-    \begin{figure}[H]
-        \centering
-        \includegraphics[width=1\textwidth]{figure/specifiche.pdf}
-        \caption{Specifiche del calcolatore utilizzato per il progetto}
-        \label{fig:specifiche}
-    \end{figure}
-    \noindent Infatti, siccome i parametri degli LLM sono parecchi, il carico è stato diviso tra RAM (16 GB) e VRAM (8 GB), per evitare rallentamenti e soprattutto crash per
-    out of memory.\\
+    caratteristiche dell'hardware del calcolatore usato. Infatti, siccome i parametri degli LLM sono nell'ordine dei miliardi, il carico è stato diviso tra RAM (16 GB) e VRAM (8 GB),
+    per evitare rallentamenti e soprattutto crash per out of memory.
     Inoltre, è stato scelto di utilizzare MongoDB come contesto operativo, invece che un VectorDB, perché il recupero dei dati è documentale (es. report
     storici e documentazione), compito in cui MongoDB riesce ad eseguire tranquillamente. Nel caso in cui il retrieval fosse di tipo vettoriale o non
-    deterministico, allora la complicazione architetturale avrebbe avuto sicuramente più senso.\\
+    deterministico, allora la complicazione architetturale avrebbe avuto sicuramente più senso.
     Per quanto riguarda la scelta degli LLM, sono stati implementati:
     \begin{itemize}
-        \item llama 3.2 (indicato con "Veloce"), con 3 miliardi di parametri, per fornire risposte rapide;
-        \item qwen 3.5 (indicato con "Ragionamento"), con 9 miliardi di parametri, per fornire risposte ragionate, che hanno i tag <think> espliciti.
+        \item Llama 3.2 (indicato con "Veloce"), con 3 miliardi di parametri, per fornire risposte rapide;
+        \item Qwen 3.5 (indicato con "Ragionamento"), con 9 miliardi di parametri, per fornire risposte ragionate, che hanno i tag <think> espliciti.
     \end{itemize}
     La comunicazione con Ollama avviene tramite API in modalità streaming, separando i token di ragionamento da quelli della risposta finale tramite
     espressione regolare.
@@ -611,7 +622,7 @@
         \caption{Assitente IA in modalità ragionamento}
         \label{fig:llm}
     \end{figure}
-    \begin{txtlisting}[style=txtstyle, caption={Invocazione di llama}, label=lst:llama]
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di Llama}, label=lst:llama]
         Sei un assistente virtuale esperto di cybersecurity per il Data Center.
         IMPORTANTE: Devi rispondere SEMPRE in lingua ITALIANA in modo diretto, veloce e conciso.
 
@@ -621,7 +632,7 @@
         3. Assisti l'utente con l'analisi del traffico, gli IP bloccati e gli allarmi del firewall in modo cortese ed efficiente.
 
     \end{txtlisting}
-    \begin{txtlisting}[style=txtstyle, caption={Invocazione di qwen}, label=lst:qwen]
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di Qwen}, label=lst:qwen]
         Sei un assistente virtuale esperto di cybersecurity per il Data Center.
         IMPORTANTE: Devi rispondere SEMPRE in lingua ITALIANA.
 
@@ -634,7 +645,7 @@
 
     \end{txtlisting}
     \subsection{Generazione SQL via LLM}
-    Come già accennato, nel data lake explorer sono stato implementati llama e qwen per aiutare l'amministratore ad
+    Come già accennato, nel data lake explorer sono stato implementati Llama e Qwen per aiutare l'amministratore ad
     scrivere le query SQL. Ciò avviene riportando solamente le parole chiave concesse per motivi di sicurezza e 
     le tabelle e gli attributi che possiedono tali tabelle. La risposta viene generata in sintassi SQL.
     \begin{figure}[H]
@@ -643,7 +654,7 @@
         \caption{Query generata dal LLM mostrando anche il ragionamento}
         \label{fig:query_llm}
     \end{figure}
-    \begin{txtlisting}[style=txtstyle, caption={Invocazione di llama per generare la query}, label=lst:query_llama]
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di Llama per generare la query}, label=lst:query_llama]
         Sei un assistente esperto in Data Engineering, specializzato nella scrittura di query SQL per Apache Spark.
         Il tuo compito è scrivere la query SQL esatta richiesta dall'utente in modo rapido e diretto.
         Regole fondamentali:
@@ -655,7 +666,7 @@
         Non effettuare fasi di ragionamento. Fornisci immediatamente la query richiesta senza tag extra.
 
     \end{txtlisting}
-    \begin{txtlisting}[style=txtstyle, caption={Invocazione di qwen per generare la query}, label=lst:query_qwen]
+    \begin{txtlisting}[style=txtstyle, caption={Invocazione di Qwen per generare la query}, label=lst:query_qwen]
         Sei un assistente esperto in Data Engineering, specializzato nella scrittura di query SQL per Apache Spark.
         Il tuo compito è scrivere la query SQL esatta richiesta dall'utente.
         Regole fondamentali:
@@ -671,7 +682,7 @@
     \section{Ulteriori strumenti}
     Per la gestione del data lake, sono stati implementati anche altri due strumenti che sono molto utili e rilevanti.
     \subsection{Catalogo}
-    Il catalogo implementa un metadata store centralizzato su MongoDBmche censisce tutte le fonti dati del sistema (dataset 
+    Il catalogo implementa un metadata store centralizzato su MongoDB che censisce tutte le fonti dati del sistema (dataset
     storico NIDS, traffico live, modelli LLM), mostrando per ciascuna schema, stato online/offline, formato e 
     un'anteprima con profilazione automatica delle colonne (tipi di dato, statistiche descrittive). 
     Supporta inoltre l'upload di nuovi dataset CSV con una pipeline di security by design: limite dimensione, 
@@ -699,7 +710,7 @@
     \section{Conclusioni}
     Il progetto ha dimostrato l’applicazione pratica delle principali tecnologie Big Data in uno scenario realistico:
     \begin{itemize}
-        \item ingestion eterogenea: dataset storico Parquet (66M+ record) e dati live PCAP, entrambi interrogabili via
+        \item ingestion eterogenea: dataset storico Parquet (66 milioni+ record) e dati live PCAP, entrambi interrogabili via
                 Spark SQL grazie alla Data Federation;
         \item elaborazione distribuita, sfruttando Spark con query SQL complesse su aggregazioni, window functions temporali e join tra sorgenti dati eterogenee;
         \item visualizzazione interattive, che offrono prospettive complementari sul traffico di rete;
